@@ -111,7 +111,7 @@ class OlimpiaClimateEntity(CoordinatorEntity[OlimpiaCoordinator], ClimateEntity)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"scheduler_active": bool(self._data.get("scheduler_active"))}
+        return {"scheduler_active": bool(self._data.get("scheduler"))}
 
     def _optimistic_update(self, **fields) -> None:
         """Aggiorna coordinator data ottimisticamente dopo un comando."""

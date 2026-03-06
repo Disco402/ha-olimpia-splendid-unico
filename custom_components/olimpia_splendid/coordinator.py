@@ -39,6 +39,8 @@ class OlimpiaCoordinator(DataUpdateCoordinator):
         self.port: int = entry.data.get("port", 2000)
         self.credentials: dict = dict(entry.data["credentials"])
         self._tcp_lock = threading.Lock()
+        self._last_known_mode: int | None = None
+        self._last_command_time: float = 0
 
     # --- Persistenza counter ---
 
@@ -101,11 +103,28 @@ class OlimpiaCoordinator(DataUpdateCoordinator):
                     status = dict(client._last_clima_event)
                 else:
                     status = client.get_status_safe()
-                if status.get("scheduler_active"):
+                if status.get("scheduler"):
                     _LOGGER.warning(
                         "Device scheduler is active — this may cause "
                         "unexpected HVAC mode changes"
                     )
+                # Traccia cambi di modo non richiesti dall'utente
+                new_mode = status.get("mode")
+                if (
+                    self._last_known_mode is not None
+                    and new_mode is not None
+                    and new_mode != self._last_known_mode
+                ):
+                    import time as _time
+                    since_cmd = _time.monotonic() - self._last_command_time
+                    _LOGGER.warning(
+                        "HVAC mode changed without user command: "
+                        "%s -> %s (%.1fs since last command, "
+                        "scheduler=%s, power=%s)",
+                        self._last_known_mode, new_mode, since_cmd,
+                        status.get("scheduler"), status.get("power"),
+                    )
+                self._last_known_mode = new_mode
                 _LOGGER.debug("poll data: %s", status)
                 return {"status": status, "counter": client._user_counter}
             finally:
@@ -137,11 +156,14 @@ class OlimpiaCoordinator(DataUpdateCoordinator):
             return False
 
     def _sync_command(self, method_name: str, *args) -> bool:
+        import time as _time
         with self._tcp_lock:
             client = self._connect_and_auth()
             try:
                 method = getattr(client, method_name)
                 result = method(*args)
+                self._last_command_time = _time.monotonic()
+                _LOGGER.debug("Command %s(%s) -> %s", method_name, args, result)
                 return result
             finally:
                 client.disconnect()
