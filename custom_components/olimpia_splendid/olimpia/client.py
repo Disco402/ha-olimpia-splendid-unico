@@ -878,7 +878,8 @@ class OlimpiaClient:
 
         # Warm-up ping
         for i in range(3):
-            if self.ping():
+            # Changed from ping() as causes a beep on the device each time we poll and authenticate
+            if self.get_mac():
                 self._crypto_ok = True
                 break
 
