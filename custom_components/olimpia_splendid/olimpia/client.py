@@ -901,6 +901,8 @@ class OlimpiaClient:
         self._log(f"  COMMIT OK")
         # Post-commit: attendi push 0x61 per confermare stato applicato
         self._last_clima_event = None
+        # Adding ping() else, set commands dont actually take effect immediately #TODO Check this
+        self.ping()
         self._poll_for_events(3.0)
         if self._last_clima_event:
             self._log(f"  Post-commit state: {self._last_clima_event}")
