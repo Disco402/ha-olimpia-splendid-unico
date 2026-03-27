@@ -111,7 +111,8 @@ class OlimpiaCoordinator(DataUpdateCoordinator):
                 # PING + poll per ClimaStateEvent (NO COMMIT per evitare
                 # che stati SET pendenti vengano applicati dal firmware)
                 client._last_clima_event = None
-                client.ping()
+                # ping() causes aircon unit to "beep" each time its polled (30s)
+                ##client.ping()
                 client._poll_for_events(2.0)
                 if client._last_clima_event:
                     status = dict(client._last_clima_event)
