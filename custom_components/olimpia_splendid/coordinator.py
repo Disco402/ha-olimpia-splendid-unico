@@ -43,6 +43,7 @@ class OlimpiaCoordinator(DataUpdateCoordinator):
         self._tcp_lock = threading.Lock()
         self._last_known_mode: int | None = None
         self._last_known_power: bool | None = None
+        self._last_known_status: dict | None = None
         self._last_command_time: float = 0
 
     # --- Persistenza counter ---
@@ -109,13 +110,24 @@ class OlimpiaCoordinator(DataUpdateCoordinator):
                 }
             client = self._connect_and_auth()
             try:
-                # PING + poll per ClimaStateEvent (NO COMMIT per evitare
-                # che stati SET pendenti vengano applicati dal firmware)
+                # GET_MODE + poll per ClimaStateEvent (NO COMMIT per evitare
+                # che stati SET pendenti vengano applicati dal firmware;
+                # ping causa beep su alcune unità — issue #2)
                 client._last_clima_event = None
-                client.ping()
+                client.get_mode()
                 client._poll_for_events(2.0)
                 if client._last_clima_event:
                     status = dict(client._last_clima_event)
+                elif self._last_known_power is False and self.data:
+                    # Device OFF: NON inviare GET_ROOM_TEMP — il firmware
+                    # attiva brevemente fan_only per misurare la temperatura,
+                    # e a volte non si rispegne (phantom power on).
+                    # Usa i dati cached finche' il device resta spento.
+                    _LOGGER.debug(
+                        "Device OFF, no ClimaStateEvent after GET_MODE — "
+                        "using cached data to avoid GET_ROOM_TEMP activation"
+                    )
+                    status = dict(self.data)
                 else:
                     status = client.get_status_safe()
                 if status.get("scheduler"):
@@ -147,22 +159,29 @@ class OlimpiaCoordinator(DataUpdateCoordinator):
                     and new_power != self._last_known_power
                 ):
                     since_cmd = _time.monotonic() - self._last_command_time
+                    raw_hex = ""
+                    if hasattr(client, '_last_clima_raw'):
+                        raw_hex = client._last_clima_raw.hex() if client._last_clima_raw else ""
                     if new_power and since_cmd > COMMAND_GRACE_PERIOD:
                         _LOGGER.warning(
                             "PHANTOM POWER ON: device turned ON without user "
                             "command (%.1fs since last cmd, scheduler=%s, "
-                            "mode=%s). If scheduler is active, disable it "
-                            "via the Scheduler switch.",
+                            "mode=%s, raw_event=%s, "
+                            "prev_state=%s, new_state=%s)",
                             since_cmd, status.get("scheduler"),
-                            status.get("mode"),
+                            status.get("mode"), raw_hex,
+                            self._last_known_status, status,
                         )
                     elif not new_power and since_cmd > COMMAND_GRACE_PERIOD:
                         _LOGGER.warning(
                             "Device turned OFF without user command "
-                            "(%.1fs since last cmd, scheduler=%s)",
+                            "(%.1fs since last cmd, scheduler=%s, "
+                            "raw_event=%s, prev_state=%s, new_state=%s)",
                             since_cmd, status.get("scheduler"),
+                            raw_hex, self._last_known_status, status,
                         )
                 self._last_known_power = new_power
+                self._last_known_status = dict(status)
                 _LOGGER.debug("poll data: %s", status)
                 return {"status": status, "counter": client._user_counter}
             finally:

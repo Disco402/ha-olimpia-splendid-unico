@@ -31,6 +31,7 @@ class OlimpiaClient:
         self._user_counter: int = 0
         self._device_uid: Optional[bytes] = None
         self._last_clima_event: Optional[dict] = None
+        self._last_clima_raw: Optional[bytes] = None
         self._crypto_ok = False
         self._recv_buf = bytearray()
         self._cmd_lock = threading.Lock()
@@ -453,6 +454,7 @@ class OlimpiaClient:
             'mode': mode, 'fan': fan, 'flap': flap,
         }
         self._last_clima_event = event
+        self._last_clima_raw = bytes(data)
         self._log(f"  ClimaStateEvent: power={power} set={set_temp}C "
                   f"room={room_temp}C mode={mode} fan={fan} flap={flap}")
         for cb in self._event_callbacks:
@@ -876,9 +878,11 @@ class OlimpiaClient:
         self._encrypted = True
         self._crypto.counter = 0
 
-        # Warm-up ping
+        # Warm-up: verifica crypto con GET_MODE (ping causa beep,
+        # GET_ROOM_TEMP attiva fan su device spento)
         for i in range(3):
-            if self.ping():
+            ack = self._send_command(Opcode.GET_MODE)
+            if ack is not None and ack.success:
                 self._crypto_ok = True
                 break
 
@@ -1180,6 +1184,27 @@ class OlimpiaClient:
         if not ack or not ack.success or not ack.ack_data:
             return None
         return le_to_int(ack.ack_data)
+
+    def get_timer(self) -> Optional[bytes]:
+        """Read firmware timer (opcode 0x56). Returns raw bytes (8B BE long ms timestamp)."""
+        ack = self._send_command(Opcode.SET_TIMER)
+        if not ack or not ack.success or not ack.ack_data:
+            return None
+        return ack.ack_data
+
+    def get_scheduler_data(self) -> Optional[bytes]:
+        """Read scheduler data (opcode 0x5C). Returns raw bytes (98B = 7 days × 14B)."""
+        ack = self._send_command(Opcode.GET_SCHEDULER)
+        if not ack or not ack.success or not ack.ack_data:
+            return None
+        return ack.ack_data
+
+    def get_scheduler_data_alt(self) -> Optional[bytes]:
+        """Read scheduler data via opcode 0x58 (alternative). Returns raw bytes."""
+        ack = self._send_command(Opcode.GET_SESSION_RANDOM)
+        if not ack or not ack.success or not ack.ack_data:
+            return None
+        return ack.ack_data
 
     def send_raw(self, opcode: int, value: Optional[bytes] = None,
                  timeout: float = DEFAULT_TIMEOUT) -> Optional[AckResponse]:
